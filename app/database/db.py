@@ -13,7 +13,6 @@ DB_PATH = Config.DB_PATH
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -46,8 +45,7 @@ def init_db():
         file_size INTEGER DEFAULT 0,
         row_count INTEGER DEFAULT 0,
         col_count INTEGER DEFAULT 0,
-        uploaded_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        uploaded_at TEXT DEFAULT (datetime('now'))
     )
     """)
 
@@ -60,9 +58,7 @@ def init_db():
         source_file_id INTEGER,
         file_path TEXT,
         template_type TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (source_file_id) REFERENCES uploaded_files(id)
+        created_at TEXT DEFAULT (datetime('now'))
     )
     """)
 
@@ -70,14 +66,12 @@ def init_db():
     CREATE TABLE IF NOT EXISTS analyses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL DEFAULT 1,
-        file_id INTEGER NOT NULL,
+        file_id INTEGER NOT NULL DEFAULT 1,
         analysis_type TEXT DEFAULT 'full',
         results_json TEXT,
         insights_text TEXT,
         chart_count INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (file_id) REFERENCES uploaded_files(id)
+        created_at TEXT DEFAULT (datetime('now'))
     )
     """)
 
@@ -90,8 +84,7 @@ def init_db():
         from_format TEXT NOT NULL,
         to_format TEXT NOT NULL,
         status TEXT DEFAULT 'pending',
-        created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        created_at TEXT DEFAULT (datetime('now'))
     )
     """)
 
@@ -124,15 +117,22 @@ def get_user_files(user_id):
 def delete_file_record(file_id, user_id):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT file_path FROM uploaded_files WHERE id = ? AND user_id = ?", (file_id, user_id))
-    row = c.fetchone()
-    if row:
-        file_path = row["file_path"]
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        c.execute("DELETE FROM uploaded_files WHERE id = ?", (file_id,))
-        conn.commit()
-    conn.close()
+    try:
+        c.execute("SELECT file_path FROM uploaded_files WHERE id = ? AND user_id = ?", (file_id, user_id))
+        row = c.fetchone()
+        if row:
+            file_path = row["file_path"]
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            c.execute("DELETE FROM analyses WHERE file_id = ?", (file_id,))
+            c.execute("DELETE FROM reports WHERE source_file_id = ?", (file_id,))
+            c.execute("DELETE FROM uploaded_files WHERE id = ?", (file_id,))
+            conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 
 def get_file_by_id(file_id):
@@ -161,12 +161,7 @@ def get_user_reports(user_id, limit=20):
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
-    SELECT r.*, f.original_name as source_name
-    FROM reports r
-    LEFT JOIN uploaded_files f ON r.source_file_id = f.id
-    WHERE r.user_id = ?
-    ORDER BY r.created_at DESC
-    LIMIT ?
+    SELECT * FROM reports WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
     """, (user_id, limit))
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
@@ -190,12 +185,7 @@ def get_user_analyses(user_id, limit=20):
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
-    SELECT a.*, f.original_name as file_name
-    FROM analyses a
-    JOIN uploaded_files f ON a.file_id = f.id
-    WHERE a.user_id = ?
-    ORDER BY a.created_at DESC
-    LIMIT ?
+    SELECT * FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
     """, (user_id, limit))
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
