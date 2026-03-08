@@ -1,0 +1,9 @@
+credentials.json
+*.db
+uploads/
+outputs/
+reports/
+venv/
+__pycache__/
+*.pyc
+.env
